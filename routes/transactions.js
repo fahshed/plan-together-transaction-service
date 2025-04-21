@@ -148,4 +148,142 @@ router.post("/trips/:tripId/settlements", async (req, res) => {
   }
 });
 
+router.get("/trips/:tripId/expenses/by-category", async (req, res) => {
+  const { tripId } = req.params;
+
+  try {
+    const eventsSnap = await db.collection(`trips/${tripId}/events`).get();
+    const eventIds = eventsSnap.docs.map((doc) => doc.id);
+
+    const txSnaps = await Promise.all(
+      eventIds.map((eventId) =>
+        db.collection(`trips/${tripId}/events/${eventId}/transactions`).get()
+      )
+    );
+
+    const transactions = txSnaps.flatMap((snap) =>
+      snap.docs.map((doc) => doc.data())
+    );
+
+    const categoryTotals = {};
+
+    transactions.forEach((tx) => {
+      const category = tx.category || "Uncategorized";
+      const amount = parseFloat(tx.amount);
+      if (!categoryTotals[category]) {
+        categoryTotals[category] = 0;
+      }
+      categoryTotals[category] += amount;
+    });
+
+    const result = Object.entries(categoryTotals).map(([category, total]) => ({
+      category,
+      expense: parseFloat(total.toFixed(2)),
+      label: categoryLabelMap[category] || category,
+    }));
+
+    res.json(result);
+  } catch (err) {
+    console.error("Error aggregating expenses by category:", err);
+    res.status(500).json({
+      error: "Failed to compute category totals",
+      details: err.message,
+    });
+  }
+});
+
+router.get("/trips/:tripId/expenses/by-event", async (req, res) => {
+  const { tripId } = req.params;
+
+  try {
+    const eventsSnap = await db.collection(`trips/${tripId}/events`).get();
+    const eventIds = eventsSnap.docs.map((doc) => ({
+      id: doc.id,
+      name: doc.data().name || "Unnamed Event",
+    }));
+
+    const txSnaps = await Promise.all(
+      eventIds.map((event) =>
+        db.collection(`trips/${tripId}/events/${event.id}/transactions`).get()
+      )
+    );
+
+    const expensesByEvent = eventIds.map((event, index) => {
+      const transactions = txSnaps[index].docs.map((doc) => doc.data());
+      const totalExpense = transactions.reduce(
+        (sum, tx) => sum + parseFloat(tx.amount || 0),
+        0
+      );
+
+      return {
+        eventId: event.id,
+        label: event.name,
+        expense: parseFloat(totalExpense.toFixed(2)),
+      };
+    });
+
+    res.json(expensesByEvent);
+  } catch (err) {
+    console.error("Error aggregating expenses by event:", err);
+    res.status(500).json({
+      error: "Failed to compute expenses by event",
+      details: err.message,
+    });
+  }
+});
+
+router.get("/trips/:tripId/expenses/by-user", async (req, res) => {
+  const { tripId } = req.params;
+
+  try {
+    const eventsSnap = await db.collection(`trips/${tripId}/events`).get();
+    const eventIds = eventsSnap.docs.map((doc) => doc.id);
+
+    const txSnaps = await Promise.all(
+      eventIds.map((eventId) =>
+        db.collection(`trips/${tripId}/events/${eventId}/transactions`).get()
+      )
+    );
+
+    const transactions = txSnaps.flatMap((snap) =>
+      snap.docs.map((doc) => doc.data())
+    );
+
+    const userTotals = {}; // userId => { name, total }
+
+    transactions.forEach((tx) => {
+      const share = tx.amount / tx.splitBetween.length;
+      tx.splitBetween.forEach((user) => {
+        const { userId, name } = user;
+        if (!userTotals[userId]) {
+          userTotals[userId] = { userId, name, total: 0 };
+        }
+        userTotals[userId].total += share;
+      });
+    });
+
+    const result = Object.values(userTotals).map((u) => ({
+      userId: u.userId,
+      label: u.name,
+      expense: parseFloat(u.total.toFixed(2)),
+    }));
+
+    res.json(result);
+  } catch (err) {
+    console.error("Error aggregating expenses by user:", err);
+    res.status(500).json({
+      error: "Failed to compute user totals",
+      details: err.message,
+    });
+  }
+});
+
 module.exports = router;
+
+const categoryLabelMap = {
+  food: "🍔 Food",
+  transport: "🚗 Transport",
+  stay: "🏨 Stay",
+  activity: "🎫 Activity",
+  shopping: "🛍️ Shopping",
+};
