@@ -17,7 +17,7 @@ app.use(express.urlencoded({ extended: false }));
 app.use(cookieParser());
 app.use(express.static(path.join(__dirname, "public")));
 
-app.use("/", indexRouter);
-app.use("/transactions", authenticateUser, transactionsRouter);
+app.use("/api/transactions/index", indexRouter);
+app.use("/api/transactions", authenticateUser, transactionsRouter);
 
 module.exports = app;
